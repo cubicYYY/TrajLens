@@ -13,7 +13,13 @@ use crate::models::{
     ActivityEdge, ActivityGraph, ActivityNode, Cost, GoalCategory, OpType, Operation, Trajectory,
 };
 
-static PATH_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:^|\s)(/[^\s;|&<>]+)").unwrap());
+/// Matches filesystem paths (absolute or relative) in command strings.
+static PATH_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?:^|\s)(/[^\s;|&<>]+|\.{0,2}/[^\s;|&<>]+|[a-zA-Z0-9_-]+/[^\s;|&<>]+)").unwrap());
+
+/// Matches HTTP(S) URLs in command strings.
+static URL_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"https?://[^\s;|&<>'""]+"#).unwrap());
 
 /// Classify into a GoalCategory from sub_category string or args.
 fn classify_goal_category(sub_category: Option<&str>) -> GoalCategory {
@@ -75,12 +81,46 @@ fn extract_target_path(
     "[workspace]".to_string()
 }
 
-/// Extract target path or command name from a command string.
+/// Extract the primary TARGET OBJECT from a command string.
+/// Priority: URL > filesystem path > command name (last resort).
+/// The target is what the command ACTS ON, not the command itself.
 fn extract_target_from_command(cmd: &str) -> String {
-    if let Some(m) = PATH_RE.find(cmd) {
-        return m.as_str().trim().trim_end_matches('/').to_string();
+    // URLs are first-class targets (endpoints the agent interacts with)
+    if let Some(m) = URL_RE.find(cmd) {
+        let url = m.as_str();
+        // Normalize: strip query params, keep path
+        if let Some(path_start) = url.find("://").map(|i| i + 3) {
+            if let Some(path_pos) = url[path_start..].find('/') {
+                let host_and_path = &url[..path_start + path_pos + url[path_start + path_pos..].find('?').unwrap_or(url.len() - path_start - path_pos)];
+                return host_and_path.to_string();
+            }
+        }
+        return url.split('?').next().unwrap_or(url).to_string();
     }
-    let first_word = cmd.split_whitespace().next().unwrap_or("cmd");
+    // Filesystem paths (absolute or relative)
+    if let Some(m) = PATH_RE.find(cmd) {
+        let path = m.as_str().trim().trim_end_matches('/');
+        // Skip if it's just a flag like --include=*.py
+        if !path.starts_with('-') && path.len() > 2 {
+            return path.to_string();
+        }
+    }
+    // Try: for commands like "cat file.txt" or "cat > file.txt", extract the filename
+    let words: Vec<&str> = cmd.split_whitespace().collect();
+    if words.len() >= 2 {
+        // Skip flags (words starting with -)
+        for w in &words[1..] {
+            if *w == ">" || *w == ">>" { continue; }
+            if w.starts_with('-') { continue; }
+            if w.starts_with('|') || w.starts_with(';') { break; }
+            // Looks like a filename or path (has a dot or slash, or no special chars)
+            if (w.contains('.') || w.contains('/')) && !w.starts_with('{') && !w.starts_with('(') {
+                return w.trim_end_matches('/').to_string();
+            }
+        }
+    }
+    // True last resort
+    let first_word = words.first().unwrap_or(&"cmd");
     let cmd_name = first_word.rsplit('/').next().unwrap_or(first_word);
     format!("[{}]", cmd_name)
 }

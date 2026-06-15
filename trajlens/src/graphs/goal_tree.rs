@@ -58,22 +58,110 @@ The key is to find the critical result or decision in each "current goal", which
 
 Your task: build a Goal Transition Tree showing what goals the agent pursued and how they relate.
 
+# CRITICAL: This must be a TREE with depth, NOT a flat chain.
+
+The tree MUST have at least 2 levels of hierarchy. A flat chain (ROOT → 1 → 2 → 3 → ... all via "next" edges) is WRONG.
+
+Correct structure: ROOT has 2-4 children (phases). Each phase has 2-4 sub-children (actions).
+
+# LOOP INVARIANT (most important rule)
+
+Every parent node forms a CLOSED LOOP with its children:
+  parent --sub--> first_child --next--> ... --next--> last_child --backtrack--> parent
+
+This means:
+- Parent has one "sub" edge per plan it launches (to the first child of that plan)
+- Children within a plan are chained by "next" edges (first→second→...→last)
+- The LAST child of each chain has a "backtrack" edge returning to the parent
+- A node CANNOT have both "next" AND "backtrack" — it's either mid-chain or end-of-chain
+
+Single plan (most common):
+  3 --sub--> 3.1 --next--> 3.2 --next--> 3.3 --backtrack--> 3
+
+Multiple plans (parent retries after first plan fails):
+  3 --sub--> 3.1 --next--> 3.2 --backtrack--> 3   (first plan failed)
+  3 --sub--> 3.3 --next--> 3.4 --backtrack--> 3   (second plan, new approach)
+
+WRONG (node has both next AND backtrack — REJECTED):
+  3.2 --next--> 3.3       ← means 3.2 is mid-chain
+  3.2 --backtrack--> 3    ← means 3.2 is end-of-chain
+  CONTRADICTION: a node is either middle or end, never both.
+
+If 3.2 failed and the parent pivots, 3.2 should be the END of its chain (backtrack),
+and the parent launches a NEW sub edge to 3.3 (start of next plan).
+
+Example with full edge set:
+  ROOT --sub--> 1
+  1 --next--> 2
+  2 --next--> 3
+  3 --backtrack--> ROOT        ← closes the ROOT loop
+
+  1 --sub--> 1.1
+  1.1 --next--> 1.2
+  1.2 --backtrack--> 1         ← closes node 1's loop
+
+  3 --sub--> 3.1
+  3.1 --next--> 3.2
+  3.2 --backtrack--> 3         ← closes node 3's loop
+
+Tree shape:
+  ROOT
+  ├── 1 (Reconnaissance)
+  │   ├── 1.1 (read files)
+  │   └── 1.2 (probe endpoints)
+  ├── 2 (Analysis)
+  └── 3 (Exploitation)
+      ├── 3.1 (write exploit)
+      └── 3.2 (execute & verify)
+
+WRONG (flat chain — REJECTED):
+  ROOT → 1 → 2 → 3 → 4 → 5 (all "next", no sub edges, no loops)
+
+WRONG (missing backtrack — REJECTED):
+  ROOT --sub--> 1, 1 --next--> 2, 2 --next--> 3  (no backtrack to ROOT)
+
 # Node ID Convention
 
-- Root goal: "ROOT"
-- Children of ROOT: "1", "2", "3", ...
-- Children of node "2": "2.1", "2.2", ...
-- Children of node "2.1": "2.1.1", "2.1.2", ...
-
-The root is always "ROOT". First-level children are single numbers. Deeper levels add dot-suffixes.
+- Root: "ROOT" (level 0 — the only node at this level)
+- Children of ROOT: "1", "2", "3" (level 1 — major phases, 2-4 nodes)
+- Children of "2": "2.1", "2.2" (level 2 — actions within phase)
+- Children of "2.1": "2.1.1", "2.1.2" (level 3 — rare, only if needed)
 
 # Edge Types
 
-- "sub": parent starts a new sub-plan (e.g., "ROOT" → "1" means root spawns sub-plan starting at node 1)
-- "next": sequential step within the same plan (e.g., "1" → "2" means after 1, try 2)
-- "backtrack": last node in plan reports back to parent (e.g., "2" → "ROOT" means plan done, return to parent)
+- "sub": parent → first child (exactly ONE per parent that has children)
+- "next": sibling → next sibling (chains children left-to-right)
+- "backtrack": last child → parent (closes the loop; every parent gets exactly one)
 
-A node MAY have both a "sub" edge (to a child) AND a "next" edge (to a sibling). This means the node first executes its sub-plan, then the overall plan continues to the next sibling.
+The validator checks:
+- Every node with children has exactly 1 outgoing "sub" edge
+- Every parent receives exactly 1 incoming "backtrack" edge from its last child
+- ROOT's loop is closed (last phase backtracks to ROOT)
+
+# Sibling Differentiation
+
+When the agent retries or refines an approach, each sibling node MUST state what CHANGED
+from the previous attempt. Do NOT use vague labels like "Refine exploit" or "Try again".
+
+BAD siblings (indistinguishable):
+  3.1: "Write exploit script"
+  3.2: "Refine exploit script"
+  3.3: "Try exploit again"
+
+GOOD siblings (each states the concrete difference):
+  3.1: "Exploit via SQL injection on /search endpoint"
+  3.2: "Exploit via file upload with path traversal"
+  3.3: "Exploit via SSRF targeting internal PostgreSQL"
+
+BAD (vague refinement):
+  3.1: "Attempt authentication bypass"
+  3.2: "Retry with different approach"
+
+GOOD (states what changed):
+  3.1: "Bypass auth via case-insensitive email registration"
+  3.2: "Bypass auth via JWT secret brute-force (wordlist)"
+
+The label must answer: "what is DIFFERENT about THIS attempt vs the previous one?"
 
 # Output Format (strict JSON)
 
@@ -411,6 +499,122 @@ fn collect_anomalies(tree: &GoalTransitionTree) -> Vec<String> {
                     "Backtrack edge from failed node '{}' has no label — must explain WHY it failed",
                     edge.source_id
                 ));
+            }
+        }
+    }
+
+    // Tree shape checker: enforce hierarchical structure and loop invariant.
+    {
+        use crate::models::GoalEdgeType;
+        let sub_edges: Vec<_> = tree.edges.iter().filter(|e| e.edge_type == GoalEdgeType::Sub).collect();
+        let next_edges: Vec<_> = tree.edges.iter().filter(|e| e.edge_type == GoalEdgeType::Next).collect();
+        let bt_edges: Vec<_> = tree.edges.iter().filter(|e| e.edge_type == GoalEdgeType::Backtrack).collect();
+        let root_id = &tree.root_id;
+
+        // Rule 1: ROOT is level 0 — no sub/next edge points TO ROOT.
+        let root_is_child = tree.edges.iter().any(|e| {
+            e.target_id == *root_id && (e.edge_type == GoalEdgeType::Sub || e.edge_type == GoalEdgeType::Next)
+        });
+        if root_is_child {
+            anomalies.push("SHAPE-1: ROOT must be level 0. No sub/next edge should target ROOT.".into());
+        }
+
+        // Rule 2: ROOT must have children (at least 2 phases).
+        let root_sub: Vec<_> = sub_edges.iter().filter(|e| e.source_id == *root_id).collect();
+        let mut root_child_count = 0;
+        if let Some(first) = root_sub.first() {
+            root_child_count = 1;
+            let mut current = first.target_id.as_str();
+            while let Some(next) = next_edges.iter().find(|e| e.source_id == current) {
+                root_child_count += 1;
+                current = &next.target_id;
+            }
+        }
+        if root_child_count < 2 && tree.nodes.len() >= 5 {
+            anomalies.push(format!(
+                "SHAPE-2: ROOT has only {} child(ren). Need 2-4 phases. \
+                 Structure: ROOT --sub--> 1 --next--> 2 --next--> 3 --backtrack--> ROOT.",
+                root_child_count
+            ));
+        }
+
+        // Rule 3: Loop invariant — every parent with children must have:
+        //   exactly 1 incoming backtrack from its last child.
+        // Find all parents (nodes that have an outgoing sub edge).
+        let parents: Vec<&str> = sub_edges.iter().map(|e| e.source_id.as_str()).collect();
+        for parent_id in &parents {
+            // Find children: first child via sub, rest via next chain
+            let first_child = sub_edges.iter().find(|e| e.source_id == *parent_id);
+            if first_child.is_none() { continue; }
+
+            let mut last_child = first_child.unwrap().target_id.as_str();
+            while let Some(next) = next_edges.iter().find(|e| e.source_id == last_child) {
+                last_child = &next.target_id;
+            }
+
+            // Check: last_child must have backtrack → parent
+            let has_backtrack = bt_edges.iter().any(|e| e.source_id == last_child && e.target_id == *parent_id);
+            if !has_backtrack {
+                anomalies.push(format!(
+                    "SHAPE-3: Loop not closed for '{}'. Last child '{}' must have backtrack edge → '{}'. \
+                     Add: {{\"source_id\": \"{}\", \"target_id\": \"{}\", \"edge_type\": \"backtrack\", \"label\": \"\"}}",
+                    parent_id, last_child, parent_id, last_child, parent_id
+                ));
+            }
+        }
+
+        // Also check ROOT's loop
+        if root_child_count >= 2 {
+            let root_has_backtrack = bt_edges.iter().any(|e| e.target_id == *root_id);
+            if !root_has_backtrack {
+                anomalies.push(
+                    "SHAPE-3: ROOT loop not closed. Last phase must have backtrack → ROOT.".into()
+                );
+            }
+        }
+
+        // Rule 3b: Each sub-plan must be a closed chain ending in backtrack.
+        // A node with a backtrack edge must NOT also have a "next" edge (it's the end of a chain).
+        // A node with a "next" edge must NOT also backtrack (it's in the middle).
+        for bt in &bt_edges {
+            let source = bt.source_id.as_str();
+            let also_has_next = next_edges.iter().any(|e| e.source_id == source);
+            if also_has_next {
+                let next_target = next_edges.iter().find(|e| e.source_id == source).unwrap();
+                anomalies.push(format!(
+                    "SHAPE-3b: Node '{}' has BOTH a backtrack (to '{}') AND a next (to '{}'). \
+                     A node is either the end of a chain (backtrack only) or in the middle (next only), never both. \
+                     If '{}' failed and the parent started a new plan, use a SEPARATE sub edge from the parent.",
+                    source, bt.target_id, next_target.target_id, source
+                ));
+            }
+        }
+
+        // Rule 4: Depth — at least one phase must have sub-children.
+        let phase_has_sub = parents.iter().any(|p| *p != root_id.as_str());
+        if !phase_has_sub && tree.nodes.len() >= 5 {
+            anomalies.push(
+                "SHAPE-4: No depth — no phase has sub-children. \
+                 At least one phase must have sub edges to actions (e.g., 1 --sub--> 1.1)."
+                    .into(),
+            );
+        }
+
+        // Rule 5: No sibling chain longer than 5 (too flat within a level).
+        for sub in &sub_edges {
+            let mut length = 1;
+            let mut current = sub.target_id.as_str();
+            while let Some(next) = next_edges.iter().find(|e| e.source_id == current) {
+                length += 1;
+                current = &next.target_id;
+                if length > 6 { break; }
+            }
+            if length > 5 {
+                anomalies.push(format!(
+                    "SHAPE-5: Chain under '{}' has {} siblings (max 5). Group into sub-phases.",
+                    sub.source_id, length
+                ));
+                break;
             }
         }
     }

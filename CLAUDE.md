@@ -148,6 +148,7 @@ Rust tests use `insta` for snapshot testing. Integration tests in `trajlens/test
 
 ## CRITICAL: Dev Rules
 
+- CRITICAL: If user ask you to run something, always estimate cost first, and ask confirmation from the user.
 - Mocking should be transparent to modules: no special handling for mocking is allowed in production code.
 - Do NOT trim any string in logging unless it exceeds 1024 characters.
 - Simplicity beats complexity. Keep it simple and stupid.
