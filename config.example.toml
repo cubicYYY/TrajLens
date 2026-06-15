@@ -1,0 +1,781 @@
+# TrajLens Example Configuration File
+#
+# Copy this file to one of the following locations:
+#   1. ./config.toml (current directory, highest priority)
+#   2. ~/.config/trajlens/config.toml (user-specific)
+#
+# All parameters are optional. If omitted, defaults shown below are used.
+# You can customize any section independently.
+
+# =============================================================================
+# LLM Configuration
+# =============================================================================
+
+[llm.anthropic]
+# Anthropic API endpoint URL
+# Default: https://api.anthropic.com/v1/messages
+# Custom example (for proxy or testing):
+# api_url = "http://localhost:8080/v1/messages"
+api_url = "https://api.anthropic.com/v1/messages"
+
+# Anthropic API version header
+# Default: 2023-06-01
+api_version = "2023-06-01"
+
+# Default model for Anthropic API
+# Options: claude-3-5-haiku-20241022, claude-3-5-sonnet-20241022, claude-opus-4-20250514
+# Default: claude-3-5-sonnet-20241022
+default_model = "claude-3-5-sonnet-20241022"
+
+# Maximum tokens to generate
+# Range: 1-200000
+# Default: 16384
+# For shorter responses: 4096
+# For longer analysis: 32768
+max_tokens = 16384
+
+# Temperature for text generation
+# Range: 0.0 (deterministic) - 1.0 (creative)
+# Default: 0.0 (deterministic for reproducible graphs)
+# For creative outputs: 0.7
+temperature = 0.0
+
+# Request timeout in seconds
+# Default: 300 (5 minutes)
+# For faster responses: 60
+# For complex analysis: 600
+timeout_secs = 300
+
+[llm.bedrock]
+# Default AWS region for Bedrock
+# Default: us-west-2
+# Other options: us-east-1, eu-west-1, ap-southeast-1
+default_region = "us-west-2"
+
+# Model ID mapping for Bedrock
+# Bedrock uses different model IDs than direct Anthropic API
+haiku_model_id = "anthropic.claude-3-5-haiku-20241022-v1:0"
+sonnet_model_id = "anthropic.claude-3-5-sonnet-20241022-v2:0"
+opus_model_id = "anthropic.claude-opus-4-20250514-v1:0"
+
+# Maximum tokens and temperature (same as Anthropic)
+max_tokens = 16384
+temperature = 0.0
+timeout_secs = 300
+
+# =============================================================================
+# Cost Estimation - Model Pricing
+# =============================================================================
+# Update these when pricing changes. Values are in USD per million tokens.
+
+[cost.models.claude-3-5-haiku-20241022]
+# Cost per 1 million input tokens (USD)
+# Default: 1.0
+input_per_million = 1.0
+
+# Cost per 1 million output tokens (USD)
+# Default: 5.0
+output_per_million = 5.0
+
+[cost.models.claude-3-5-sonnet-20241022]
+# Cost per 1 million input tokens (USD)
+# Default: 3.0
+input_per_million = 3.0
+
+# Cost per 1 million output tokens (USD)
+# Default: 15.0
+output_per_million = 15.0
+
+[cost.models.claude-opus-4-20250514]
+# Cost per 1 million input tokens (USD)
+# Default: 15.0
+input_per_million = 15.0
+
+# Cost per 1 million output tokens (USD)
+# Default: 75.0
+output_per_million = 75.0
+
+# =============================================================================
+# Rendering Configuration - SVG
+# =============================================================================
+
+[rendering.svg]
+# SVG canvas margin (pixels)
+# Default: 20.0
+# For tighter layout: 10.0
+# For more whitespace: 40.0
+margin = 20.0
+
+# Default node width for activity nodes (pixels)
+# Default: 200.0
+# For narrower nodes: 150.0
+# For wider nodes: 250.0
+node_width = 200.0
+
+# Base node height (pixels)
+# Default: 80.0
+node_height_base = 80.0
+
+# Additional height per operation (pixels)
+# Default: 20.0
+# For more compact: 15.0
+# For more spacious: 25.0
+node_height_per_operation = 20.0
+
+# Font size for node labels (pixels)
+# Default: 12.0
+font_size_label = 12.0
+
+# Font size for node details (pixels)
+# Default: 10.0
+font_size_detail = 10.0
+
+# Font family for all text
+# Default: "Arial, sans-serif"
+# Alternatives: "Helvetica, sans-serif", "monospace"
+font_family = "Arial, sans-serif"
+
+# Maximum characters per line for text wrapping
+# Default: 30
+# For longer labels: 40
+# For shorter labels: 20
+text_wrap_max_chars = 30
+
+# Stroke width for node borders (pixels)
+# Default: 1.0
+stroke_width = 1.0
+
+# Stroke width for edges (pixels)
+# Default: 2.0
+edge_stroke_width = 2.0
+
+# Arrow head size (pixels)
+# Default: 8.0
+arrow_head_size = 8.0
+
+[rendering.svg.colors]
+# Color scheme for goal categories
+# Colors in hex format (#RRGGBB)
+# These defaults use Material Design pastel colors
+
+# Read operations
+# Default: #e3f2fd (light blue)
+# Alternatives: #b3e5fc (cyan), #c5cae9 (indigo)
+read = "#e3f2fd"
+
+# Write operations
+# Default: #fce4ec (light pink)
+# Alternatives: #f8bbd0 (pink), #ffccbc (orange)
+write = "#fce4ec"
+
+# Edit operations
+# Default: #fff3e0 (light orange)
+# Alternatives: #ffe0b2 (amber), #fff9c4 (yellow)
+edit = "#fff3e0"
+
+# Run/Execute operations
+# Default: #e8f5e9 (light green)
+# Alternatives: #c8e6c9 (green), #dcedc8 (lime)
+run = "#e8f5e9"
+
+# List/Browse operations
+# Default: #f3e5f5 (light purple)
+# Alternatives: #e1bee7 (purple), #d1c4e9 (deep purple)
+list = "#f3e5f5"
+
+# Other/Unknown operations
+# Default: #f5f5f5 (light grey)
+other = "#f5f5f5"
+
+# Edge color
+# Default: #666666 (dark grey)
+# For lighter edges: #999999
+# For darker edges: #333333
+edge = "#666666"
+
+# Text color
+# Default: #000000 (black)
+# For softer text: #333333
+text = "#000000"
+
+# Border color
+# Default: #cccccc (light grey)
+# For darker borders: #999999
+# For lighter borders: #e0e0e0
+border = "#cccccc"
+
+# =============================================================================
+# Rendering Configuration - SVG Goal Tree (G1)
+# =============================================================================
+# Controls the visual appearance of Goal Transition Tree renderings.
+
+[rendering.svg.goal_tree]
+# Width of each goal node (pixels)
+# Default: 240.0
+# For more compact trees: 180.0
+# For wider labels: 300.0
+node_width = 240.0
+
+# Height of each goal node (pixels)
+# Default: 90.0
+node_height = 90.0
+
+# Vertical spacing between hierarchy levels (pixels)
+# Default: 150.0
+# For more compact: 100.0
+# For more spacious: 200.0
+level_spacing = 150.0
+
+# Horizontal spacing between sibling nodes (pixels)
+# Default: 50.0
+# For tighter: 30.0
+# For wider: 80.0
+node_spacing = 50.0
+
+# Canvas margin around the entire tree (pixels)
+# Default: 60.0
+margin = 60.0
+
+# Reserved height for legend area at bottom (pixels)
+# Default: 160.0
+legend_height = 160.0
+
+# Stroke width for goal node borders (pixels)
+# Default: 1.5
+node_stroke_width = 1.5
+
+# Stroke width for edge lines (pixels)
+# Default: 2.0
+edge_stroke_width = 2.0
+
+# Corner radius for node rectangles (pixels)
+# Default: 5.0
+# For sharp corners: 0.0
+# For more rounded: 10.0
+node_corner_radius = 5.0
+
+# Font size for hierarchical ID labels (e.g., "1.2.3") (pixels)
+# Default: 10.0
+font_size_id = 10.0
+
+# Font size for node text labels (pixels)
+# Default: 10.0
+font_size_label = 10.0
+
+# Font size for edge labels and step range text (pixels)
+# Default: 9.0
+font_size_detail = 9.0
+
+# Font size for legend title (pixels)
+# Default: 12.0
+font_size_legend_title = 12.0
+
+# Maximum characters per line for text wrapping in nodes
+# Default: 28
+text_wrap_max_chars = 28
+
+# Maximum number of text lines displayed in a node
+# Default: 3
+max_text_lines = 3
+
+# Line height for wrapped text (pixels)
+# Default: 14.0
+line_height = 14.0
+
+[rendering.svg.goal_tree.colors]
+# Status-based node fill colors (semantic: reflect goal completion state)
+
+# Fill color for Done/completed goal nodes
+# Default: #C8E6C9 (Material green 100)
+status_done = "#C8E6C9"
+
+# Fill color for Failed goal nodes
+# Default: #FFCDD2 (Material red 100)
+status_failed = "#FFCDD2"
+
+# Fill color for Abandoned goal nodes
+# Default: #E0E0E0 (Material grey 300)
+status_abandoned = "#E0E0E0"
+
+# Fill color for Work-in-Progress goal nodes
+# Default: #FFF9C4 (Material yellow 100)
+status_wip = "#FFF9C4"
+
+# Edge colors (semantic: reflect relationship type)
+
+# Color for Sub edges (parent decomposing into child goal)
+# Default: #2196F3 (Material blue 500)
+edge_sub = "#2196F3"
+
+# Color for Next edges (sequential sibling goals)
+# Default: #4CAF50 (Material green 500)
+edge_next = "#4CAF50"
+
+# Color for Backtrack edges (failure, returning to parent)
+# Default: #F44336 (Material red 500)
+edge_backtrack = "#F44336"
+
+# Color for success backtrack edges (completion, returning to parent)
+# Default: #4CAF50 (Material green 500)
+edge_success = "#4CAF50"
+
+# UI element colors
+
+# Node border stroke color
+# Default: #666
+node_border = "#666"
+
+# Primary text color for node labels
+# Default: #000
+text_primary = "#000"
+
+# Secondary text color for IDs and step ranges
+# Default: #666
+text_secondary = "#666"
+
+# Legend border/outline color
+# Default: #999
+legend_border = "#999"
+
+# =============================================================================
+# Rendering Configuration - SVG Reasoning DAG (G2)
+# =============================================================================
+# Controls the visual appearance of Reasoning Artifact DAG renderings.
+
+[rendering.svg.reasoning_dag]
+# Width of each reasoning node (pixels)
+# Default: 220.0
+# For more compact: 180.0
+# For wider: 260.0
+node_width = 220.0
+
+# Height of each reasoning node (pixels)
+# Default: 90.0
+node_height = 90.0
+
+# Stroke width for node borders (pixels)
+# Default: 1.5
+node_stroke_width = 1.5
+
+# Stroke width for edge lines (pixels)
+# Default: 2.0
+edge_stroke_width = 2.0
+
+# Corner radius for node rectangles (pixels)
+# Default: 5.0
+node_corner_radius = 5.0
+
+# Font size for node content text (pixels)
+# Default: 10.0
+font_size_content = 10.0
+
+# Font size for metadata (turn, confidence) (pixels)
+# Default: 9.0
+font_size_detail = 9.0
+
+# Font size for legend title (pixels)
+# Default: 12.0
+font_size_legend_title = 12.0
+
+# Font size for legend items (pixels)
+# Default: 10.0
+font_size_legend_item = 10.0
+
+# Maximum characters per line for text wrapping in nodes
+# Default: 28
+text_wrap_max_chars = 28
+
+# Maximum number of text lines displayed in a node
+# Default: 3
+max_text_lines = 3
+
+# Line height for wrapped text (pixels)
+# Default: 14.0
+line_height = 14.0
+
+[rendering.svg.reasoning_dag.colors]
+# Node type fill colors (semantic: reflect artifact type)
+
+# Fill color for Ground Truth nodes (established facts)
+# Default: #E3F2FD (Material blue 50)
+node_ground_truth = "#E3F2FD"
+
+# Fill color for Insight nodes (derived conclusions)
+# Default: #FFF3E0 (Material orange 50)
+node_insight = "#FFF3E0"
+
+# Edge colors (semantic: reflect reasoning relationship)
+
+# Color for Infers edges (logical derivation)
+# Default: #2196F3 (Material blue 500)
+edge_infers = "#2196F3"
+
+# Color for Contradicts edges (logical conflict)
+# Default: #F44336 (Material red 500)
+edge_contradicts = "#F44336"
+
+# Color for Supersedes edges (replacement/update)
+# Default: #FF9800 (Material orange 500)
+edge_supersedes = "#FF9800"
+
+# UI element colors
+
+# Node border stroke color
+# Default: #666
+node_border = "#666"
+
+# Primary text color for node content
+# Default: #000
+text_primary = "#000"
+
+# Secondary text color for metadata
+# Default: #666
+text_secondary = "#666"
+
+# Legend border/outline color
+# Default: #999
+legend_border = "#999"
+
+# =============================================================================
+# Rendering Configuration - Layout
+# =============================================================================
+
+[rendering.layout]
+# Horizontal spacing between nodes (pixels)
+# Used by Sugiyama layout algorithm
+# Default: 100.0
+# For more compact: 60.0
+# For more spread out: 150.0
+x_spacing = 100.0
+
+# Vertical spacing between layers (pixels)
+# Used by Sugiyama layout algorithm
+# Default: 150.0
+# For more compact: 100.0
+# For more spread out: 200.0
+y_spacing = 150.0
+
+# Minimum node separation (pixels)
+# Prevents nodes from overlapping
+# Default: 20.0
+min_node_separation = 20.0
+
+# Maximum iterations for layout optimization
+# Higher values = better layout but slower
+# Default: 100
+# For faster (less optimal): 50
+# For better (slower): 200
+max_iterations = 100
+
+# =============================================================================
+# Rendering Configuration - Cost Map (Treemap)
+# =============================================================================
+
+[rendering.cost_map]
+# Minimum area for a node to be visible (square pixels)
+# Nodes smaller than this are hidden
+# Default: 100.0
+# For more detail: 50.0
+# For less clutter: 200.0
+min_node_area = 100.0
+
+# Padding between parent and child nodes (pixels)
+# Default: 2.0
+padding = 2.0
+
+# Label font size (pixels)
+# Default: 10.0
+label_font_size = 10.0
+
+# Cost font size (pixels)
+# Default: 8.0
+cost_font_size = 8.0
+
+# Color intensity scale
+# Range: 0.0-1.0
+# Higher values = more saturated colors
+# Default: 0.7
+# For softer colors: 0.5
+# For brighter colors: 0.9
+color_intensity = 0.7
+
+# =============================================================================
+# Parsing Configuration
+# =============================================================================
+
+[parsing]
+# Maximum line length before truncation
+# Prevents memory issues with extremely long lines
+# Default: 10000
+# For stricter limits: 5000
+# For looser limits: 20000
+max_line_length = 10000
+
+# Whether to trim whitespace from parsed items
+# Default: true
+trim_whitespace = true
+
+# Default cost when none specified (used for legacy logs)
+[parsing.default_cost]
+input_tokens = 0
+output_tokens = 0
+dollar_cost = 0.0
+
+# Cost estimation parameters
+[parsing.estimation]
+# Characters per token ratio for cost estimation
+# Default: 4
+# For more conservative estimates: 3
+# For less conservative: 5
+chars_per_token = 4
+
+# Which model pricing to use for estimation: "haiku", "sonnet", "opus"
+# Default: "sonnet" (Claude 3.5 Sonnet pricing)
+# For budget analysis: "haiku"
+# For high-end analysis: "opus"
+default_model = "sonnet"
+
+# =============================================================================
+# CLI Configuration
+# =============================================================================
+
+[cli]
+# Default output directory for 'run' command
+# Default: "./output"
+# Alternatives: "./results", "/tmp/trajlens"
+default_output_dir = "./output"
+
+# Default log format for auto-detection
+# Options: auto, claude-code, pocgen
+# Default: auto
+default_format = "auto"
+
+# Number of parallel workers for batch processing
+# 0 = use number of CPU cores
+# Default: 0
+# For single-threaded: 1
+# For custom parallelism: 4, 8, etc.
+batch_workers = 0
+
+# Progress bar refresh rate (milliseconds)
+# Default: 100
+# For smoother updates: 50
+# For less CPU usage: 200
+progress_refresh_ms = 100
+
+# =============================================================================
+# Graph Building Configuration
+# =============================================================================
+
+[graph.activity_graph]
+# Whether to merge nodes with the same primary object
+# Default: true
+# Set to false for more granular view
+merge_same_object = true
+
+# Whether to create hierarchical parent-child relationships
+# Default: true
+# Set to false for flat graph
+enable_hierarchy = true
+
+# Maximum depth for hierarchy
+# Prevents infinite recursion
+# Default: 10
+# For deeper nesting: 20
+# For shallower: 5
+max_hierarchy_depth = 10
+
+[graph.cost_map]
+# Whether to group by goal (requires G1)
+# If false, groups by category only
+# Default: false
+group_by_goal = false
+
+# Whether to flatten single-child nodes
+# Reduces visual clutter
+# Default: true
+flatten_single_children = true
+
+# Minimum cost threshold for inclusion (USD)
+# Nodes below this cost are aggregated into "Other"
+# Default: 0.0001
+# For more detail: 0.00001
+# For less detail: 0.001
+min_cost_threshold = 0.0001
+
+# =============================================================================
+# IGR (Intermediate Graph Representation) Configuration
+# =============================================================================
+
+[igr]
+# Whether to pretty-print TOML output
+# Default: true
+# Set to false for compact output
+pretty_print = true
+
+# Indentation for pretty printing (spaces)
+# Default: 2
+# Alternatives: 4 (wider), 1 (compact)
+indent_spaces = 2
+
+# Whether to include metadata in IGR output
+# Metadata includes: generation timestamp, trajlens version, etc.
+# Default: true
+include_metadata = true
+
+# =============================================================================
+# Web Configuration (for trajlens-web)
+# =============================================================================
+
+[web]
+# Default port for development server
+# Default: 5173 (Vite default)
+# Alternatives: 3000, 8080, etc.
+dev_port = 5173
+
+# Maximum file size for upload (bytes)
+# Default: 10485760 (10 MB)
+# For larger files: 52428800 (50 MB)
+max_upload_size = 10485760
+
+# Whether to enable WASM console logging
+# Default: false (production), true (development)
+# Set to true for debugging
+wasm_console_log = false
+
+# =============================================================================
+# Logging Configuration
+# =============================================================================
+
+[logging]
+# Log level
+# Options: error, warn, info, debug, trace
+# Default: info
+# For debugging: debug or trace
+# For production: warn or error
+level = "info"
+
+# Whether to log to file
+# Default: false
+log_to_file = false
+
+# Log file path (when log_to_file = true)
+# Default: ./trajlens.log
+# Alternatives: /tmp/trajlens.log, ~/trajlens.log
+log_file_path = "./trajlens.log"
+
+# Whether to include timestamps in logs
+# Default: true
+include_timestamps = true
+
+# Whether to include module names in logs
+# Default: true
+include_module_names = true
+
+# =============================================================================
+# Performance Configuration
+# =============================================================================
+
+[performance]
+# Buffer size for file I/O (bytes)
+# Default: 8192 (8 KB)
+# For larger files: 65536 (64 KB)
+# For smaller: 4096 (4 KB)
+io_buffer_size = 8192
+
+# Maximum memory for parser cache (bytes)
+# 0 = unlimited
+# Default: 104857600 (100 MB)
+# For more caching: 524288000 (500 MB)
+# For less: 52428800 (50 MB)
+parser_cache_max_size = 104857600
+
+# Whether to enable parallel graph building
+# Only affects batch processing
+# Default: true
+# Set to false for sequential processing
+parallel_graph_building = true
+
+# =============================================================================
+# Validation Configuration
+# =============================================================================
+
+[validation]
+# Whether to validate graphs after building
+# Catches structural invariant violations
+# Default: true
+# Set to false for faster builds (not recommended)
+enable_validation = true
+
+# Whether to fail on validation warnings
+# Default: false
+# Set to true for strict validation
+strict_validation = false
+
+# Whether to log validation errors
+# Default: true
+log_validation_errors = true
+
+# =============================================================================
+# Example Configuration Scenarios
+# =============================================================================
+
+# SCENARIO 1: High-Performance Batch Processing
+# ------------------------------------------
+# [cli]
+# batch_workers = 16  # Use 16 parallel workers
+# [performance]
+# io_buffer_size = 65536  # 64 KB buffer
+# parser_cache_max_size = 524288000  # 500 MB cache
+
+# SCENARIO 2: Budget-Conscious Analysis
+# ------------------------------------------
+# [parsing.estimation]
+# default_model = "haiku"  # Use cheapest model for estimates
+
+# SCENARIO 3: Detailed Visualization
+# ------------------------------------------
+# [rendering.svg]
+# node_width = 250.0  # Wider nodes
+# text_wrap_max_chars = 40  # More text per line
+# [rendering.layout]
+# x_spacing = 150.0  # More horizontal space
+# y_spacing = 200.0  # More vertical space
+
+# SCENARIO 4: Compact Output
+# ------------------------------------------
+# [rendering.svg]
+# node_width = 150.0  # Narrower nodes
+# text_wrap_max_chars = 20  # Less text
+# [rendering.layout]
+# x_spacing = 60.0  # Tighter horizontal
+# y_spacing = 100.0  # Tighter vertical
+
+# SCENARIO 5: Custom Color Theme (Dark Mode)
+# ------------------------------------------
+# [rendering.svg.colors]
+# read = "#1e3a5f"  # Dark blue
+# write = "#5f1e3a"  # Dark pink
+# edit = "#5f3a1e"  # Dark orange
+# run = "#1e5f3a"  # Dark green
+# list = "#3a1e5f"  # Dark purple
+# other = "#2a2a2a"  # Dark grey
+# edge = "#cccccc"  # Light grey edges
+# text = "#ffffff"  # White text
+# border = "#666666"  # Medium grey border
+
+# SCENARIO 6: Proxy/Testing Environment
+# ------------------------------------------
+# [llm.anthropic]
+# api_url = "http://localhost:8080/v1/messages"  # Local proxy
+# timeout_secs = 600  # Longer timeout for debugging
+
+# SCENARIO 7: Development/Debugging
+# ------------------------------------------
+# [logging]
+# level = "debug"  # Verbose logging
+# log_to_file = true  # Save to file
+# [web]
+# wasm_console_log = true  # Browser debugging
+# [validation]
+# strict_validation = true  # Catch all issues

@@ -1,0 +1,17 @@
+{
+    "name": "TrajLens Dev Environment",
+    "image": "mcr.microsoft.com/devcontainers/python:3.12-bookworm",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-azuretools.vscode-docker",
+                "ms-python.python",
+                "ms-python.vscode-pylint"
+            ]
+        }
+    },
+    "postCreateCommand": "bash .devcontainer/postCreate.sh",
+    "remoteUser": "vscode",
+    "workspaceFolder": "${localWorkspaceFolder}",
+    "workspaceMount": "source=${localWorkspaceFolder},target=${localWorkspaceFolder},type=bind"
+}

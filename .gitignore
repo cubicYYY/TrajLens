@@ -1,0 +1,47 @@
+# Rust
+target/
+
+# Python
+.env
+.env.*
+!.env.example
+output/
+__pycache__/
+.pytest_cache/
+.venv/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg-info/
+dist/
+build/
+
+# Node
+node_modules/
+.next/
+
+# WASM build artifacts
+trajlens-web/src/wasm/*.wasm
+trajlens-web/src/wasm/*.js
+trajlens-web/src/wasm/*.d.ts
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Claude
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Config (may contain secrets)
+config.toml
+
+# Example trajectories (download separately — too large for git)
+example_trajectories/

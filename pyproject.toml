@@ -1,0 +1,42 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "trajlens"
+version = "0.1.0"
+description = "Transform agent execution logs into structured multi-graph visualizations"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [
+    { name = "TrajLens Contributors" }
+]
+keywords = ["agent", "logging", "visualization", "graph", "analysis"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Rust",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "maturin>=1.0",
+]
+
+[tool.maturin]
+module-name = "trajlens"
+features = ["python"]
+python-source = "trajlens-py"
+# Strip symbols in release builds for smaller binaries
+strip = true
+
+[tool.pytest.ini_options]
+testpaths = ["trajlens-py/tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
