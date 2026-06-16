@@ -52,3 +52,5 @@ pub use reactflow::ReactFlowCompiler;
 
 #[cfg(feature = "neo4j")]
 pub use neo4j::Neo4jCompiler;
+
+pub mod text_tree;

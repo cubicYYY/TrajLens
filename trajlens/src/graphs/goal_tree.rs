@@ -199,41 +199,51 @@ pub async fn build_with_boundaries(
     let llm_client = model_registry::create_client(model).await?;
 
     // Build segment descriptions from the trajectory
-    let segments: Vec<String> = boundaries.windows(2).enumerate().map(|(i, w)| {
-        let start = w[0];
-        let end = w[1];
-        let step_count = end - start;
+    let segments: Vec<String> = boundaries
+        .windows(2)
+        .enumerate()
+        .map(|(i, w)| {
+            let start = w[0];
+            let end = w[1];
+            let step_count = end - start;
 
-        // Sample content from this segment
-        let mut content_sample = String::new();
-        for step in trajectory.steps.iter().skip(start).take(step_count.min(5)) {
-            for item in &step.items {
-                let snippet = &item.content[..item.content.len().min(100)];
-                content_sample.push_str(snippet);
-                content_sample.push('\n');
+            // Sample content from this segment
+            let mut content_sample = String::new();
+            for step in trajectory.steps.iter().skip(start).take(step_count.min(5)) {
+                for item in &step.items {
+                    let snippet = &item.content[..item.content.len().min(100)];
+                    content_sample.push_str(snippet);
+                    content_sample.push('\n');
+                }
             }
-        }
 
-        format!("Segment {} (steps {}-{}): {}", i + 1, start, end, content_sample.trim())
-    }).collect();
+            format!(
+                "Segment {} (steps {}-{}): {}",
+                i + 1,
+                start,
+                end,
+                content_sample.trim()
+            )
+        })
+        .collect();
 
     let segments_text = segments.join("\n\n");
 
-    let system_prompt = r#"You are given a trajectory divided into pre-defined segments.
-For each segment, provide a JSON object with:
+    // Step 1: Ask LLM to label each segment and assign phase grouping.
+    // Simple array response — reliable and fast.
+    let system_prompt = r#"You are given pre-defined trajectory segments.
+For each segment, provide:
 - "label": what the agent was trying to do (max 15 words, specific)
 - "goal_type": "explore" or "think" or "act"
 - "status": "done" or "failed" or "partial"
 - "result": brief outcome (max 20 words)
-- "details": key evidence (1-2 sentences with specifics from the content)
-- "phase": which phase group this belongs to (integer 1-4, group similar segments)
+- "phase": integer 1-4, grouping related segments into major phases
 
-Return a JSON array of objects, one per segment, in order."#;
+Return ONLY a JSON array of objects, one per segment, in order."#;
 
     let user_message = format!(
         "Trajectory: {} steps, outcome: {}\n\nSegments:\n{}\n\n\
-         Return a JSON array of {} objects (one per segment). \
-         Group them into 2-4 phases via the \"phase\" field. Return ONLY the JSON array.",
+         Return a JSON array of {} objects. Group into 2-4 phases via \"phase\" field.",
         trajectory.steps.len(),
         trajectory.outcome,
         segments_text,
@@ -245,7 +255,7 @@ Return a JSON array of objects, one per segment, in order."#;
         .complete(system_prompt, &user_message)
         .await?;
 
-    // Parse the LLM's segment labels
+    // Parse segment labels
     let seg_labels: Vec<serde_json::Value> = {
         let trimmed = response.trim();
         let json_str = if let Some(start) = trimmed.find('[') {
@@ -260,46 +270,42 @@ Return a JSON array of objects, one per segment, in order."#;
         serde_json::from_str(json_str).unwrap_or_else(|_| Vec::new())
     };
 
-    // Build the tree structure deterministically from boundaries + LLM labels
+    // Step 2: Build tree structure deterministically with proper IDs and loop invariant.
     use crate::models::{GoalEdge, GoalEdgeType, GoalNode, GoalStatus, GoalType};
 
     let num_segments = boundaries.len() - 1;
+    let max_fanout = 4;
     let mut nodes = Vec::new();
     let mut edges = Vec::new();
 
-    // Determine phase groupings from LLM output
+    // Group segments by phase
     let mut phase_map: std::collections::BTreeMap<u64, Vec<usize>> =
         std::collections::BTreeMap::new();
     for (i, label) in seg_labels.iter().enumerate().take(num_segments) {
         let phase = label.get("phase").and_then(|v| v.as_u64()).unwrap_or(1);
         phase_map.entry(phase).or_default().push(i);
     }
-    // If LLM didn't produce phases, split roughly into 3
     if phase_map.is_empty() || phase_map.len() == 1 {
         phase_map.clear();
         let chunk = num_segments / 3;
         for i in 0..num_segments {
-            let phase = (i / chunk.max(1)).min(2) as u64 + 1;
-            phase_map.entry(phase).or_default().push(i);
+            phase_map
+                .entry((i / chunk.max(1)).min(2) as u64 + 1)
+                .or_default()
+                .push(i);
         }
     }
 
-    // ROOT node
     let root_status = if trajectory.outcome == "SOLVED" {
         GoalStatus::Done
     } else {
         GoalStatus::Failed
     };
+
+    // ROOT
     nodes.push(GoalNode {
-        node_id: "ROOT".to_string(),
-        label: format!(
-            "{}",
-            seg_labels
-                .first()
-                .and_then(|v| v.get("label"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("Execute task")
-        ),
+        node_id: "ROOT".into(),
+        label: "Execute task".into(),
         goal_type: GoalType::Act,
         status: root_status.clone(),
         result: trajectory.outcome.clone(),
@@ -313,18 +319,17 @@ Return a JSON array of objects, one per segment, in order."#;
         reasoning_artifacts: vec![],
     });
 
-    // Phase nodes + leaf nodes
-    let phase_ids: Vec<String> = phase_map.keys().enumerate().map(|(i, _)| format!("{}", i + 1)).collect();
+    // Phase nodes (level 1): IDs "1", "2", "3", ...
+    let phase_count = phase_map.len();
+    let phase_ids: Vec<String> = (1..=phase_count).map(|i| format!("{}", i)).collect();
 
-    // ROOT → first phase (sub), phases linked by next, last phase → ROOT (backtrack)
-    if let Some(first_phase_id) = phase_ids.first() {
-        edges.push(GoalEdge {
-            edge_type: GoalEdgeType::Sub,
-            source_id: "ROOT".to_string(),
-            target_id: first_phase_id.clone(),
-            label: String::new(),
-        });
-    }
+    // ROOT loop: ROOT→sub→1→next→2→next→3→backtrack→ROOT
+    edges.push(GoalEdge {
+        edge_type: GoalEdgeType::Sub,
+        source_id: "ROOT".into(),
+        target_id: phase_ids[0].clone(),
+        label: String::new(),
+    });
     for w in phase_ids.windows(2) {
         edges.push(GoalEdge {
             edge_type: GoalEdgeType::Next,
@@ -333,31 +338,25 @@ Return a JSON array of objects, one per segment, in order."#;
             label: String::new(),
         });
     }
-    if let Some(last_phase_id) = phase_ids.last() {
-        edges.push(GoalEdge {
-            edge_type: GoalEdgeType::Backtrack,
-            source_id: last_phase_id.clone(),
-            target_id: "ROOT".to_string(),
-            label: String::new(),
-        });
-    }
+    edges.push(GoalEdge {
+        edge_type: GoalEdgeType::Backtrack,
+        source_id: phase_ids.last().unwrap().clone(),
+        target_id: "ROOT".into(),
+        label: String::new(),
+    });
 
     for (phase_idx, (_, seg_indices)) in phase_map.iter().enumerate() {
-        let phase_id = format!("{}", phase_idx + 1);
-        let phase_start = boundaries[*seg_indices.first().unwrap_or(&0)];
-        let phase_end = boundaries[seg_indices.last().unwrap_or(&0) + 1];
+        let phase_id = &phase_ids[phase_idx];
+        let p_start = boundaries[*seg_indices.first().unwrap_or(&0)];
+        let p_end = boundaries[seg_indices.last().unwrap_or(&0) + 1];
 
-        // Infer phase label from its segments
-        let phase_label = if let Some(first_seg) = seg_indices.first() {
-            seg_labels
-                .get(*first_seg)
-                .and_then(|v| v.get("label"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("Phase")
-                .to_string()
-        } else {
-            "Phase".to_string()
-        };
+        // Phase label from first segment's label
+        let phase_label = seg_labels
+            .get(*seg_indices.first().unwrap_or(&0))
+            .and_then(|v| v.get("label"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("Phase")
+            .to_string();
 
         nodes.push(GoalNode {
             node_id: phase_id.clone(),
@@ -367,28 +366,497 @@ Return a JSON array of objects, one per segment, in order."#;
             result: String::new(),
             details: String::new(),
             level: 1,
-            step_range: (phase_start, phase_end),
+            step_range: (p_start, p_end),
             cost: crate::models::Cost::default(),
             reasoning_artifacts: vec![],
         });
 
         // Leaf nodes under this phase
-        let leaf_ids: Vec<String> = seg_indices
-            .iter()
-            .enumerate()
-            .map(|(i, _)| format!("{}.{}", phase_id, i + 1))
-            .collect();
-
-        // Phase → first leaf (sub)
-        if let Some(first_leaf) = leaf_ids.first() {
+        // If >max_fanout: create sub-groups. Otherwise: direct children.
+        if seg_indices.len() <= max_fanout {
+            // Direct: phase → leaves as "X.1", "X.2", ...
+            let leaf_ids: Vec<String> = (1..=seg_indices.len())
+                .map(|i| format!("{}.{}", phase_id, i))
+                .collect();
+            // Loop: phase→sub→first→next→...→last→backtrack→phase
             edges.push(GoalEdge {
                 edge_type: GoalEdgeType::Sub,
                 source_id: phase_id.clone(),
-                target_id: first_leaf.clone(),
+                target_id: leaf_ids[0].clone(),
+                label: String::new(),
+            });
+            for w in leaf_ids.windows(2) {
+                edges.push(GoalEdge {
+                    edge_type: GoalEdgeType::Next,
+                    source_id: w[0].clone(),
+                    target_id: w[1].clone(),
+                    label: String::new(),
+                });
+            }
+            edges.push(GoalEdge {
+                edge_type: GoalEdgeType::Backtrack,
+                source_id: leaf_ids.last().unwrap().clone(),
+                target_id: phase_id.clone(),
+                label: String::new(),
+            });
+
+            for (li, &seg_i) in seg_indices.iter().enumerate() {
+                let leaf_id = &leaf_ids[li];
+                let lbl = seg_labels.get(seg_i);
+                nodes.push(make_leaf_node(
+                    leaf_id,
+                    seg_i,
+                    boundaries,
+                    lbl,
+                    &root_status,
+                ));
+            }
+        } else {
+            // Sub-groups: phase → "X.1", "X.2" (groups), each group → "X.1.1", "X.1.2" (leaves)
+            let chunks: Vec<&[usize]> = seg_indices.chunks(max_fanout).collect();
+            let group_ids: Vec<String> = (1..=chunks.len())
+                .map(|i| format!("{}.{}", phase_id, i))
+                .collect();
+
+            // Phase loop
+            edges.push(GoalEdge {
+                edge_type: GoalEdgeType::Sub,
+                source_id: phase_id.clone(),
+                target_id: group_ids[0].clone(),
+                label: String::new(),
+            });
+            for w in group_ids.windows(2) {
+                edges.push(GoalEdge {
+                    edge_type: GoalEdgeType::Next,
+                    source_id: w[0].clone(),
+                    target_id: w[1].clone(),
+                    label: String::new(),
+                });
+            }
+            edges.push(GoalEdge {
+                edge_type: GoalEdgeType::Backtrack,
+                source_id: group_ids.last().unwrap().clone(),
+                target_id: phase_id.clone(),
+                label: String::new(),
+            });
+
+            for (gi, chunk) in chunks.iter().enumerate() {
+                let gid = &group_ids[gi];
+                let g_start = boundaries[*chunk.first().unwrap_or(&0)];
+                let g_end = boundaries[*chunk.last().unwrap_or(&0) + 1];
+                let g_label = seg_labels
+                    .get(*chunk.first().unwrap_or(&0))
+                    .and_then(|v| v.get("label"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Sub-phase")
+                    .to_string();
+                nodes.push(GoalNode {
+                    node_id: gid.clone(),
+                    label: g_label,
+                    goal_type: GoalType::Act,
+                    status: root_status.clone(),
+                    result: String::new(),
+                    details: String::new(),
+                    level: 2,
+                    step_range: (g_start, g_end),
+                    cost: crate::models::Cost::default(),
+                    reasoning_artifacts: vec![],
+                });
+
+                // Group loop
+                let leaf_ids: Vec<String> = (1..=chunk.len())
+                    .map(|i| format!("{}.{}", gid, i))
+                    .collect();
+                edges.push(GoalEdge {
+                    edge_type: GoalEdgeType::Sub,
+                    source_id: gid.clone(),
+                    target_id: leaf_ids[0].clone(),
+                    label: String::new(),
+                });
+                for w in leaf_ids.windows(2) {
+                    edges.push(GoalEdge {
+                        edge_type: GoalEdgeType::Next,
+                        source_id: w[0].clone(),
+                        target_id: w[1].clone(),
+                        label: String::new(),
+                    });
+                }
+                edges.push(GoalEdge {
+                    edge_type: GoalEdgeType::Backtrack,
+                    source_id: leaf_ids.last().unwrap().clone(),
+                    target_id: gid.clone(),
+                    label: String::new(),
+                });
+
+                for (li, &seg_i) in chunk.iter().enumerate() {
+                    let leaf_id = &leaf_ids[li];
+                    let lbl = seg_labels.get(seg_i);
+                    let mut node = make_leaf_node(leaf_id, seg_i, boundaries, lbl, &root_status);
+                    node.level = 3;
+                    nodes.push(node);
+                }
+            }
+        }
+    }
+
+    let mut tree = GoalTransitionTree {
+        nodes,
+        edges,
+        root_id: "ROOT".into(),
+    };
+
+    add_missing_backtrack_edges(&mut tree);
+    collapse_single_child_nodes(&mut tree);
+    propagate_attributes_bottom_up(&mut tree);
+    fill_missing_backtrack_labels(&mut tree);
+
+    eprintln!(
+        "Goal tree built from {} boundaries ({} segments)",
+        boundaries.len(),
+        num_segments
+    );
+    Ok(tree)
+}
+
+/// Collapse single-child intermediate nodes.
+/// If a parent has exactly one child, merge the child into the parent:
+/// - Parent takes the child's label, result, details, goal_type, status
+/// - Child is removed
+/// - Any grandchildren become direct children of the parent
+fn collapse_single_child_nodes(tree: &mut GoalTransitionTree) {
+    use crate::models::GoalEdgeType;
+
+    loop {
+        // Find a non-ROOT parent with exactly one child
+        let mut to_collapse: Option<(String, String)> = None; // (parent_id, child_id)
+
+        // Build children map
+        let mut children_of: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        for edge in &tree.edges {
+            if edge.edge_type == GoalEdgeType::Sub {
+                let mut chain = vec![edge.target_id.clone()];
+                let mut current = edge.target_id.clone();
+                loop {
+                    let next = tree
+                        .edges
+                        .iter()
+                        .find(|e| e.source_id == current && e.edge_type == GoalEdgeType::Next);
+                    match next {
+                        Some(e) => {
+                            chain.push(e.target_id.clone());
+                            current = e.target_id.clone();
+                        }
+                        None => break,
+                    }
+                }
+                children_of.insert(edge.source_id.clone(), chain);
+            }
+        }
+
+        for (parent_id, children) in &children_of {
+            if parent_id == "ROOT" {
+                continue;
+            }
+            if children.len() == 1 {
+                to_collapse = Some((parent_id.clone(), children[0].clone()));
+                break;
+            }
+        }
+
+        let (parent_id, child_id) = match to_collapse {
+            Some(pair) => pair,
+            None => break, // No more single-child nodes
+        };
+
+        // Merge child into parent:
+        // 1. Copy child's semantic fields to parent
+        if let Some(child_node) = tree.nodes.iter().find(|n| n.node_id == child_id).cloned() {
+            if let Some(parent_node) = tree.nodes.iter_mut().find(|n| n.node_id == parent_id) {
+                // Keep parent's node_id but take child's content
+                if parent_node.label == parent_node.result || parent_node.result.is_empty() {
+                    parent_node.label = child_node.label;
+                }
+                if parent_node.result.is_empty() {
+                    parent_node.result = child_node.result;
+                }
+                if parent_node.details.is_empty() {
+                    parent_node.details = child_node.details;
+                }
+                parent_node.goal_type = child_node.goal_type;
+                parent_node.status = child_node.status;
+                parent_node.step_range = child_node.step_range;
+            }
+        }
+
+        // 2. Re-point grandchildren edges: child's sub→grandchild becomes parent's sub→grandchild
+        let child_id_clone = child_id.clone();
+        for edge in &mut tree.edges {
+            if edge.source_id == child_id_clone {
+                edge.source_id = parent_id.clone();
+            }
+            if edge.target_id == child_id_clone {
+                edge.target_id = parent_id.clone();
+            }
+        }
+
+        // 3. Remove the child node
+        tree.nodes.retain(|n| n.node_id != child_id);
+
+        // 4. Remove self-referencing edges (parent→parent)
+        tree.edges.retain(|e| e.source_id != e.target_id);
+
+        // 5. Remove duplicate edges
+        let mut seen = std::collections::HashSet::new();
+        tree.edges.retain(|e| {
+            let key = format!("{}:{}:{:?}", e.source_id, e.target_id, e.edge_type);
+            seen.insert(key)
+        });
+    }
+}
+
+/// Propagate status and goal_type from children to parents (bottom-up).
+/// - Parent status = worst child status (failed > partial > done)
+/// - Parent goal_type = dominant child type (majority vote)
+fn propagate_attributes_bottom_up(tree: &mut GoalTransitionTree) {
+    use crate::models::{GoalEdgeType, GoalStatus, GoalType};
+    use std::collections::HashMap;
+
+    // Build parent→children map
+    let mut children_of: HashMap<String, Vec<String>> = HashMap::new();
+    for edge in &tree.edges {
+        if edge.edge_type == GoalEdgeType::Sub {
+            // Follow next chain from first child
+            let mut chain = vec![edge.target_id.clone()];
+            let mut current = edge.target_id.clone();
+            loop {
+                let next = tree
+                    .edges
+                    .iter()
+                    .find(|e| e.source_id == current && e.edge_type == GoalEdgeType::Next);
+                match next {
+                    Some(e) => {
+                        chain.push(e.target_id.clone());
+                        current = e.target_id.clone();
+                    }
+                    None => break,
+                }
+            }
+            children_of.insert(edge.source_id.clone(), chain);
+        }
+    }
+
+    // Topological order: process leaves first, then parents
+    // Repeated passes until stable (simple for small trees)
+    let node_map: HashMap<String, usize> = tree
+        .nodes
+        .iter()
+        .enumerate()
+        .map(|(i, n)| (n.node_id.clone(), i))
+        .collect();
+
+    for _pass in 0..5 {
+        for (parent_id, child_ids) in &children_of {
+            if parent_id == "ROOT" {
+                continue;
+            } // ROOT keeps its own status
+
+            let child_statuses: Vec<&GoalStatus> = child_ids
+                .iter()
+                .filter_map(|id| node_map.get(id))
+                .map(|&i| &tree.nodes[i].status)
+                .collect();
+
+            let child_types: Vec<&GoalType> = child_ids
+                .iter()
+                .filter_map(|id| node_map.get(id))
+                .map(|&i| &tree.nodes[i].goal_type)
+                .collect();
+
+            if child_statuses.is_empty() {
+                continue;
+            }
+
+            // Worst status propagates up
+            let new_status = if child_statuses.iter().any(|s| **s == GoalStatus::Failed) {
+                GoalStatus::Failed
+            } else if child_statuses.iter().any(|s| **s == GoalStatus::Partial) {
+                GoalStatus::Partial
+            } else {
+                GoalStatus::Done
+            };
+
+            // Dominant goal_type (majority via counting)
+            let explore_count = child_types
+                .iter()
+                .filter(|t| ***t == GoalType::Explore)
+                .count();
+            let think_count = child_types
+                .iter()
+                .filter(|t| ***t == GoalType::Think)
+                .count();
+            let act_count = child_types.iter().filter(|t| ***t == GoalType::Act).count();
+            let new_type = if explore_count >= think_count && explore_count >= act_count {
+                GoalType::Explore
+            } else if think_count >= act_count {
+                GoalType::Think
+            } else {
+                GoalType::Act
+            };
+
+            if let Some(&idx) = node_map.get(parent_id) {
+                tree.nodes[idx].status = new_status;
+                tree.nodes[idx].goal_type = new_type;
+            }
+        }
+    }
+}
+
+/// Create a leaf node from segment data and LLM labels.
+fn make_leaf_node(
+    node_id: &str,
+    seg_i: usize,
+    boundaries: &[usize],
+    lbl: Option<&serde_json::Value>,
+    default_status: &crate::models::GoalStatus,
+) -> GoalNode {
+    use crate::models::{GoalStatus, GoalType};
+    let seg_start = boundaries[seg_i];
+    let seg_end = boundaries[seg_i + 1];
+    let label = lbl
+        .and_then(|v| v.get("label"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unknown")
+        .to_string();
+    let goal_type = match lbl
+        .and_then(|v| v.get("goal_type"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("act")
+    {
+        "explore" => GoalType::Explore,
+        "think" => GoalType::Think,
+        _ => GoalType::Act,
+    };
+    let status = match lbl
+        .and_then(|v| v.get("status"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("failed")
+    {
+        "done" => GoalStatus::Done,
+        "partial" => GoalStatus::Partial,
+        "abandoned" => GoalStatus::Abandoned,
+        _ => default_status.clone(),
+    };
+    let result = lbl
+        .and_then(|v| v.get("result"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    GoalNode {
+        node_id: node_id.to_string(),
+        label,
+        goal_type,
+        status,
+        result,
+        details: String::new(),
+        level: 2,
+        step_range: (seg_start, seg_end),
+        cost: crate::models::Cost::default(),
+        reasoning_artifacts: vec![],
+    }
+}
+
+/// Fallback: simple 2-level tree (ROOT → leaves) when LLM fails.
+fn build_flat_fallback(trajectory: &Trajectory, boundaries: &[usize]) -> GoalTransitionTree {
+    use crate::models::{GoalEdge, GoalEdgeType, GoalNode, GoalStatus, GoalType};
+
+    let num_segments = boundaries.len() - 1;
+    let mut nodes = Vec::new();
+    let mut edges = Vec::new();
+
+    let root_status = if trajectory.outcome == "SOLVED" {
+        GoalStatus::Done
+    } else {
+        GoalStatus::Failed
+    };
+
+    nodes.push(GoalNode {
+        node_id: "ROOT".to_string(),
+        label: "Execute task".to_string(),
+        goal_type: GoalType::Act,
+        status: root_status.clone(),
+        result: trajectory.outcome.clone(),
+        details: String::new(),
+        level: 0,
+        step_range: (
+            *boundaries.first().unwrap_or(&0),
+            *boundaries.last().unwrap_or(&0),
+        ),
+        cost: trajectory.total_cost.clone(),
+        reasoning_artifacts: vec![],
+    });
+
+    // Split into groups of 4 under ROOT
+    let max_fanout = 4;
+    let chunks: Vec<Vec<usize>> = (0..num_segments)
+        .collect::<Vec<_>>()
+        .chunks(max_fanout)
+        .map(|c| c.to_vec())
+        .collect();
+
+    let group_ids: Vec<String> = (0..chunks.len()).map(|i| format!("G{}", i + 1)).collect();
+
+    if let Some(first) = group_ids.first() {
+        edges.push(GoalEdge {
+            edge_type: GoalEdgeType::Sub,
+            source_id: "ROOT".into(),
+            target_id: first.clone(),
+            label: String::new(),
+        });
+    }
+    for w in group_ids.windows(2) {
+        edges.push(GoalEdge {
+            edge_type: GoalEdgeType::Next,
+            source_id: w[0].clone(),
+            target_id: w[1].clone(),
+            label: String::new(),
+        });
+    }
+    if let Some(last) = group_ids.last() {
+        edges.push(GoalEdge {
+            edge_type: GoalEdgeType::Backtrack,
+            source_id: last.clone(),
+            target_id: "ROOT".into(),
+            label: String::new(),
+        });
+    }
+
+    for (gi, chunk) in chunks.iter().enumerate() {
+        let gid = &group_ids[gi];
+        let g_start = boundaries[*chunk.first().unwrap()];
+        let g_end = boundaries[*chunk.last().unwrap() + 1];
+        nodes.push(GoalNode {
+            node_id: gid.clone(),
+            label: format!("Steps {}-{}", g_start, g_end),
+            goal_type: GoalType::Act,
+            status: root_status.clone(),
+            result: String::new(),
+            details: String::new(),
+            level: 1,
+            step_range: (g_start, g_end),
+            cost: crate::models::Cost::default(),
+            reasoning_artifacts: vec![],
+        });
+
+        let leaf_ids: Vec<String> = chunk.iter().map(|&i| format!("S{}", i + 1)).collect();
+        if let Some(first) = leaf_ids.first() {
+            edges.push(GoalEdge {
+                edge_type: GoalEdgeType::Sub,
+                source_id: gid.clone(),
+                target_id: first.clone(),
                 label: String::new(),
             });
         }
-        // Leaves linked by next
         for w in leaf_ids.windows(2) {
             edges.push(GoalEdge {
                 edge_type: GoalEdgeType::Next,
@@ -397,64 +865,25 @@ Return a JSON array of objects, one per segment, in order."#;
                 label: String::new(),
             });
         }
-        // Last leaf → phase (backtrack)
-        if let Some(last_leaf) = leaf_ids.last() {
+        if let Some(last) = leaf_ids.last() {
             edges.push(GoalEdge {
                 edge_type: GoalEdgeType::Backtrack,
-                source_id: last_leaf.clone(),
-                target_id: phase_id.clone(),
+                source_id: last.clone(),
+                target_id: gid.clone(),
                 label: String::new(),
             });
         }
 
-        for (leaf_idx, &seg_i) in seg_indices.iter().enumerate() {
-            let leaf_id = format!("{}.{}", phase_id, leaf_idx + 1);
+        for &seg_i in chunk {
             let seg_start = boundaries[seg_i];
             let seg_end = boundaries[seg_i + 1];
-
-            let lbl = seg_labels.get(seg_i);
-            let label = lbl
-                .and_then(|v| v.get("label"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("Unknown")
-                .to_string();
-            let goal_type = match lbl
-                .and_then(|v| v.get("goal_type"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("act")
-            {
-                "explore" => GoalType::Explore,
-                "think" => GoalType::Think,
-                _ => GoalType::Act,
-            };
-            let status = match lbl
-                .and_then(|v| v.get("status"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("failed")
-            {
-                "done" => GoalStatus::Done,
-                "partial" => GoalStatus::Partial,
-                "abandoned" => GoalStatus::Abandoned,
-                _ => GoalStatus::Failed,
-            };
-            let result = lbl
-                .and_then(|v| v.get("result"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let details = lbl
-                .and_then(|v| v.get("details"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-
             nodes.push(GoalNode {
-                node_id: leaf_id,
-                label,
-                goal_type,
-                status,
-                result,
-                details,
+                node_id: format!("S{}", seg_i + 1),
+                label: format!("Segment {} (steps {}-{})", seg_i + 1, seg_start, seg_end),
+                goal_type: GoalType::Act,
+                status: root_status.clone(),
+                result: String::new(),
+                details: String::new(),
                 level: 2,
                 step_range: (seg_start, seg_end),
                 cost: crate::models::Cost::default(),
@@ -463,19 +892,11 @@ Return a JSON array of objects, one per segment, in order."#;
         }
     }
 
-    let tree = GoalTransitionTree {
+    GoalTransitionTree {
         nodes,
         edges,
         root_id: "ROOT".to_string(),
-    };
-
-    eprintln!(
-        "Goal tree built from {} boundaries ({} segments, {} phases)",
-        boundaries.len(),
-        num_segments,
-        phase_map.len()
-    );
-    Ok(tree)
+    }
 }
 
 /// Build goal tree with multi-turn LLM correction.
@@ -562,12 +983,26 @@ WRONG (flat chain — REJECTED):
 WRONG (missing backtrack — REJECTED):
   ROOT --sub--> 1, 1 --next--> 2, 2 --next--> 3  (no backtrack to ROOT)
 
+# Fanout Constraint
+
+Each node can have AT MOST 4 children. If you need more, add an intermediate grouping layer.
+
+WRONG (5+ children — too flat):
+  3 → 3.1, 3.2, 3.3, 3.4, 3.5, 3.6  (6 children — REJECTED)
+
+CORRECT (group into sub-phases):
+  3 → 3.1 (initial attempts), 3.2 (refined attempts)
+  3.1 → 3.1.1, 3.1.2, 3.1.3
+  3.2 → 3.2.1, 3.2.2, 3.2.3
+
+This keeps the tree readable and forces meaningful grouping.
+
 # Node ID Convention
 
 - Root: "ROOT" (level 0 — the only node at this level)
 - Children of ROOT: "1", "2", "3" (level 1 — major phases, 2-4 nodes)
-- Children of "2": "2.1", "2.2" (level 2 — actions within phase)
-- Children of "2.1": "2.1.1", "2.1.2" (level 3 — rare, only if needed)
+- Children of "2": "2.1", "2.2" (level 2 — actions within phase, max 4)
+- Children of "2.1": "2.1.1", "2.1.2" (level 3 — if needed for grouping)
 
 # Edge Types
 
@@ -1070,13 +1505,15 @@ fn collect_anomalies(tree: &GoalTransitionTree) -> Vec<String> {
             while let Some(next) = next_edges.iter().find(|e| e.source_id == current) {
                 length += 1;
                 current = &next.target_id;
-                if length > 6 {
+                if length > 5 {
                     break;
                 }
             }
-            if length > 5 {
+            if length > 4 {
                 anomalies.push(format!(
-                    "SHAPE-5: Chain under '{}' has {} siblings (max 5). Group into sub-phases.",
+                    "SHAPE-5: Node '{}' has {} children (max 4). \
+                     Add an intermediate grouping layer. Example: instead of \
+                     {0}→A→B→C→D→E, use {0}→X→Y where X→A→B and Y→C→D→E.",
                     sub.source_id, length
                 ));
                 break;

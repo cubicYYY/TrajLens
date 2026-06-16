@@ -799,3 +799,40 @@ fn all_graph_types_produce_valid_svg_envelope() {
         assert!(svg.contains("xmlns="), "missing xmlns");
     }
 }
+
+/// Text tree renderer produces readable indented output.
+#[test]
+fn text_tree_renders_goal_tree() {
+    use trajlens::compilers::{text_tree::TextTreeCompiler, GraphCompiler};
+
+    let tree = GoalTransitionTree {
+        root_id: "ROOT".into(),
+        nodes: vec![
+            gnode("ROOT", "Achieve RCE on target", 0),
+            gnode("1", "Reconnaissance", 1),
+            gnode("1.1", "Read source files", 2),
+            gnode("1.2", "Probe endpoints", 2),
+            gnode("2", "Exploit attempt", 1),
+            gnode("2.1", "Write exploit", 2),
+        ],
+        edges: vec![
+            gedge(GoalEdgeType::Sub, "ROOT", "1"),
+            gedge(GoalEdgeType::Next, "1", "2"),
+            gedge(GoalEdgeType::Backtrack, "2", "ROOT"),
+            gedge(GoalEdgeType::Sub, "1", "1.1"),
+            gedge(GoalEdgeType::Next, "1.1", "1.2"),
+            gedge(GoalEdgeType::Backtrack, "1.2", "1"),
+            gedge(GoalEdgeType::Sub, "2", "2.1"),
+            gedge(GoalEdgeType::Backtrack, "2.1", "2"),
+        ],
+    };
+
+    let compiler = TextTreeCompiler::new();
+    let output = compiler.compile(&GraphEnum::GoalTree(tree));
+    println!("{}", output);
+
+    assert!(output.contains("ROOT"));
+    assert!(output.contains("├──") || output.contains("└──"));
+    assert!(output.contains("1.1"));
+    assert!(output.contains("2.1"));
+}

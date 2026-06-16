@@ -242,8 +242,7 @@ impl SVGCompiler {
             if use_horizontal {
                 // LR layout: level → x-axis (left-to-right), index → y-axis (top-to-bottom)
                 let x = (*level as f64) * (node_width + level_spacing) + 50.0;
-                let total_height =
-                    nodes.len() as f64 * (node_height + node_spacing) - node_spacing;
+                let total_height = nodes.len() as f64 * (node_height + node_spacing) - node_spacing;
                 let start_y = -total_height / 2.0 + node_height / 2.0;
 
                 for (i, node) in nodes.iter().enumerate() {
@@ -253,8 +252,7 @@ impl SVGCompiler {
             } else {
                 // TB layout: level → y-axis (top-to-bottom), index → x-axis (left-to-right)
                 let y = (*level as f64) * level_spacing + 50.0;
-                let total_width =
-                    nodes.len() as f64 * (node_width + node_spacing) - node_spacing;
+                let total_width = nodes.len() as f64 * (node_width + node_spacing) - node_spacing;
                 let start_x = -total_width / 2.0 + node_width / 2.0;
 
                 for (i, node) in nodes.iter().enumerate() {
