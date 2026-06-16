@@ -216,6 +216,11 @@ impl SVGCompiler {
             .map(|n| (n.node_id.clone(), n.node_id.clone()))
             .collect();
 
+        // Determine layout direction: if any level has >5 nodes, use horizontal (LR)
+        // so the tree grows left-to-right instead of top-to-bottom.
+        let max_level_width = hierarchy.values().map(|v| v.len()).max().unwrap_or(0);
+        let use_horizontal = max_level_width > 5;
+
         // Position nodes sorted by hierarchical ID within each level
         let mut positions: HashMap<String, (f64, f64)> = HashMap::new();
 
@@ -234,13 +239,28 @@ impl SVGCompiler {
                 parts_a.cmp(&parts_b)
             });
 
-            let y = (*level as f64) * level_spacing + 50.0;
-            let total_width = nodes.len() as f64 * (node_width + node_spacing) - node_spacing;
-            let start_x = -total_width / 2.0 + node_width / 2.0;
+            if use_horizontal {
+                // LR layout: level → x-axis (left-to-right), index → y-axis (top-to-bottom)
+                let x = (*level as f64) * (node_width + level_spacing) + 50.0;
+                let total_height =
+                    nodes.len() as f64 * (node_height + node_spacing) - node_spacing;
+                let start_y = -total_height / 2.0 + node_height / 2.0;
 
-            for (i, node) in nodes.iter().enumerate() {
-                let x = start_x + (i as f64) * (node_width + node_spacing);
-                positions.insert(node.node_id.clone(), (x, y));
+                for (i, node) in nodes.iter().enumerate() {
+                    let y = start_y + (i as f64) * (node_height + node_spacing);
+                    positions.insert(node.node_id.clone(), (x, y));
+                }
+            } else {
+                // TB layout: level → y-axis (top-to-bottom), index → x-axis (left-to-right)
+                let y = (*level as f64) * level_spacing + 50.0;
+                let total_width =
+                    nodes.len() as f64 * (node_width + node_spacing) - node_spacing;
+                let start_x = -total_width / 2.0 + node_width / 2.0;
+
+                for (i, node) in nodes.iter().enumerate() {
+                    let x = start_x + (i as f64) * (node_width + node_spacing);
+                    positions.insert(node.node_id.clone(), (x, y));
+                }
             }
         }
 
@@ -305,20 +325,58 @@ impl SVGCompiler {
                     crate::models::GoalEdgeType::Sub => (gt_colors.edge_sub.as_str(), false),
                 };
 
-                // Line ends just before the target node border. The arrowhead
-                // marker (refX=9 in a 10px marker) places its tip 1px past the line
-                // end. We offset by 1px so the tip touches the node frame exactly.
+                // pos_map stores (center_x, top_y) for each node.
+                // Rect is drawn at (x - w/2, y) with size (w, h).
                 let tip_offset = 1.0;
-                let (x1, y1, x2, y2) = match edge.edge_type {
-                    crate::models::GoalEdgeType::Sub => (sx, sy + node_height, tx, ty - tip_offset),
-                    crate::models::GoalEdgeType::Next => (
-                        sx + node_width / 2.0,
-                        sy + node_height / 2.0,
-                        tx - node_width / 2.0 - tip_offset,
-                        ty + node_height / 2.0,
-                    ),
-                    crate::models::GoalEdgeType::Backtrack => {
-                        (sx, sy, tx, ty + node_height + tip_offset)
+                let (x1, y1, x2, y2) = if use_horizontal {
+                    // LR layout: levels go left→right, siblings go top→bottom
+                    match edge.edge_type {
+                        crate::models::GoalEdgeType::Sub => (
+                            // Right edge of source → left edge of target
+                            sx + node_width / 2.0,
+                            sy + node_height / 2.0,
+                            tx - node_width / 2.0 - tip_offset,
+                            ty + node_height / 2.0,
+                        ),
+                        crate::models::GoalEdgeType::Next => (
+                            // Bottom of source → top of target (siblings stacked vertically)
+                            sx,
+                            sy + node_height,
+                            tx,
+                            ty - tip_offset,
+                        ),
+                        crate::models::GoalEdgeType::Backtrack => (
+                            // Left edge of source → right edge of target
+                            sx - node_width / 2.0,
+                            sy + node_height / 2.0,
+                            tx + node_width / 2.0 + tip_offset,
+                            ty + node_height / 2.0,
+                        ),
+                    }
+                } else {
+                    // TB layout: levels go top→bottom, siblings go left→right
+                    match edge.edge_type {
+                        crate::models::GoalEdgeType::Sub => (
+                            // Bottom of source → top of target
+                            sx,
+                            sy + node_height,
+                            tx,
+                            ty - tip_offset,
+                        ),
+                        crate::models::GoalEdgeType::Next => (
+                            // Right edge of source → left edge of target
+                            sx + node_width / 2.0,
+                            sy + node_height / 2.0,
+                            tx - node_width / 2.0 - tip_offset,
+                            ty + node_height / 2.0,
+                        ),
+                        crate::models::GoalEdgeType::Backtrack => (
+                            // Top of source → bottom of target
+                            sx,
+                            sy,
+                            tx,
+                            ty + node_height + tip_offset,
+                        ),
                     }
                 };
 

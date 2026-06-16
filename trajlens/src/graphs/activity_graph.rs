@@ -14,8 +14,9 @@ use crate::models::{
 };
 
 /// Matches filesystem paths (absolute or relative) in command strings.
-static PATH_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?:^|\s)(/[^\s;|&<>]+|\.{0,2}/[^\s;|&<>]+|[a-zA-Z0-9_-]+/[^\s;|&<>]+)").unwrap());
+static PATH_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?:^|\s)(/[^\s;|&<>]+|\.{0,2}/[^\s;|&<>]+|[a-zA-Z0-9_-]+/[^\s;|&<>]+)").unwrap()
+});
 
 /// Matches HTTP(S) URLs in command strings.
 static URL_RE: LazyLock<Regex> =
@@ -91,7 +92,11 @@ fn extract_target_from_command(cmd: &str) -> String {
         // Normalize: strip query params, keep path
         if let Some(path_start) = url.find("://").map(|i| i + 3) {
             if let Some(path_pos) = url[path_start..].find('/') {
-                let host_and_path = &url[..path_start + path_pos + url[path_start + path_pos..].find('?').unwrap_or(url.len() - path_start - path_pos)];
+                let host_and_path = &url[..path_start
+                    + path_pos
+                    + url[path_start + path_pos..]
+                        .find('?')
+                        .unwrap_or(url.len() - path_start - path_pos)];
                 return host_and_path.to_string();
             }
         }
@@ -110,9 +115,15 @@ fn extract_target_from_command(cmd: &str) -> String {
     if words.len() >= 2 {
         // Skip flags (words starting with -)
         for w in &words[1..] {
-            if *w == ">" || *w == ">>" { continue; }
-            if w.starts_with('-') { continue; }
-            if w.starts_with('|') || w.starts_with(';') { break; }
+            if *w == ">" || *w == ">>" {
+                continue;
+            }
+            if w.starts_with('-') {
+                continue;
+            }
+            if w.starts_with('|') || w.starts_with(';') {
+                break;
+            }
             // Looks like a filename or path (has a dot or slash, or no special chars)
             if (w.contains('.') || w.contains('/')) && !w.starts_with('{') && !w.starts_with('(') {
                 return w.trim_end_matches('/').to_string();
