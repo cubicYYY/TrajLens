@@ -30,6 +30,10 @@ cargo build --features "cli,svg-rust,llm-bedrock"
 # Git hooks
 ./dev_utils/install-hooks.sh
 
+# Claude Code skills (project-level → .claude/skills/)
+mkdir -p .claude/skills
+ln -sf ../../skills/analyze.md .claude/skills/analyze.md 2>/dev/null
+
 # Web viewer
 if command -v npm >/dev/null 2>&1; then
     cd trajlens-web && npm install && cd ..

@@ -1547,6 +1547,56 @@ fn collect_anomalies(tree: &GoalTransitionTree) -> Vec<String> {
         }
     }
 
+    // SHAPE-6: Siblings must NOT have overlapping step_ranges.
+    // Siblings = nodes sharing the same parent, connected via next edges.
+    {
+        use crate::models::GoalEdgeType;
+        let sub_edges: Vec<_> = tree
+            .edges
+            .iter()
+            .filter(|e| e.edge_type == GoalEdgeType::Sub)
+            .collect();
+        let next_edges: Vec<_> = tree
+            .edges
+            .iter()
+            .filter(|e| e.edge_type == GoalEdgeType::Next)
+            .collect();
+
+        for sub in &sub_edges {
+            // Collect sibling chain
+            let mut siblings = vec![sub.target_id.as_str()];
+            let mut current = sub.target_id.as_str();
+            loop {
+                let next = next_edges.iter().find(|e| e.source_id == current);
+                match next {
+                    Some(e) => {
+                        siblings.push(&e.target_id);
+                        current = &e.target_id;
+                    }
+                    None => break,
+                }
+            }
+
+            // Check pairwise overlap between consecutive siblings
+            for w in siblings.windows(2) {
+                let a = node_map.get(w[0]);
+                let b = node_map.get(w[1]);
+                if let (Some(a_node), Some(b_node)) = (a, b) {
+                    let (a_start, a_end) = a_node.step_range;
+                    let (b_start, b_end) = b_node.step_range;
+                    // Overlap: a_start < b_end AND b_start < a_end
+                    if a_start < b_end && b_start < a_end && a_end > b_start {
+                        anomalies.push(format!(
+                            "SHAPE-6: Siblings '{}' [{}-{}] and '{}' [{}-{}] have overlapping step_ranges. \
+                             Siblings must be non-overlapping and sequential.",
+                            w[0], a_start, a_end, w[1], b_start, b_end
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
     anomalies
 }
 
